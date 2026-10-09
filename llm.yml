@@ -1,0 +1,63 @@
+name: local-llm
+
+on:
+  workflow_dispatch:
+    inputs:
+      prompt:
+        description: Prompt to send to the local model
+        default: Write one sentence about rain.
+        required: false
+  push:
+    paths:
+      - .github/workflows/llm.yml
+
+jobs:
+  infer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      LLAMA_TAG: b11535
+      MODEL_REPO: ggml-org/Qwen3-1.7B-GGUF
+      MODEL_FILE: Qwen3-1.7B-Q4_K_M.gguf
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Cache llama.cpp + model
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            llama-bin
+            models
+          key: llama-${{ env.LLAMA_TAG }}-${{ env.MODEL_FILE }}
+
+      - name: Fetch llama.cpp binaries
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p llama-bin
+          curl -sL -o /tmp/llama.tar.gz \
+            "https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_TAG}/llama-${LLAMA_TAG}-bin-ubuntu-x64.tar.gz"
+          tar xzf /tmp/llama.tar.gz -C llama-bin --strip-components=1
+
+      - name: Fetch model
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p models
+          curl -sL -o "models/${MODEL_FILE}" \
+            "https://huggingface.co/${MODEL_REPO}/resolve/main/${MODEL_FILE}"
+
+      - name: Run inference
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/llama-bin
+          PROMPT: ${{ inputs.prompt || 'Write one sentence about rain.' }}
+        run: |
+          ./llama-bin/llama-cli \
+            -m "models/${MODEL_FILE}" \
+            -p "$PROMPT" \
+            -n 64 \
+            -t 2 \
+            --no-warmup 2>&1 | tee /tmp/out.txt
+          echo "### Output" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/out.txt >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
